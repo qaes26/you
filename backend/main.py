@@ -1,134 +1,79 @@
-import os
-import sys
-import subprocess
-import asyncio
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 import yt_dlp
+import uvicorn
+import os
 
 app = FastAPI()
 
-# --- Configuration ---
-# Allow all origins for simplicity
-ORIGINS = ["*"]
-
+# إعدادات السماح بالاتصال من أي مكان (CORS)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-class VideoURL(BaseModel):
+class VideoRequest(BaseModel):
     url: str
 
-# --- Startup Tasks ---
+# تحديث المكتبة تلقائياً عند تشغيل السيرفر
 @app.on_event("startup")
 async def startup_event():
-    """Auto-update yt-dlp on startup."""
-    print("Checking for yt-dlp updates...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"])
-        print("yt-dlp updated successfully.")
-    except Exception as e:
-        print(f"Failed to update yt-dlp: {e}")
+    print("Updating yt-dlp...")
+    os.system("pip install --upgrade yt-dlp")
 
-# --- Endpoints ---
+@app.get("/")
+def home():
+    return {"message": "Qais Al-Jazi Server is Running Live!"}
 
 @app.get("/health")
-async def health_check():
-    """Keep-alive endpoint."""
-    return {"status": "ok", "message": "Service is running"}
+def health_check():
+    return {"status": "ok"}
 
 @app.post("/api/info")
-async def get_video_info(video: VideoURL):
-    """
-    Extract video metadata using yt-dlp.
-    Returns title, thumbnail, and simplified formats.
-    """
-    url = video.url
-    if not url:
-        raise HTTPException(status_code=400, detail="URL is required")
-
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-    }
-
+def get_video_info(request: VideoRequest):
     try:
+        # إعدادات التحميل مع الكوكيز (الحل السحري)
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'cookiefile': 'cookies.txt',  # <--- هذا السطر هو الذي سيقرأ الملف السري من Render
+            'format': 'best',
+        }
+        
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            # استخراج المعلومات بدون تحميل الفيديو فعلياً
+            info = ydl.extract_info(request.url, download=False)
             
-            formats = []
-            seen_formats = set()
-
+            # تنظيف وتجهيز الصيغ (Formats)
+            formats_list = []
             for f in info.get('formats', []):
-                f_id = f.get('format_id')
-                ext = f.get('ext')
-                vcodec = f.get('vcodec')
-                acodec = f.get('acodec')
-                height = f.get('height')
-
-                label = ""
-                type_ = "video"
-                
-                if vcodec == 'none' and acodec != 'none':
-                    type_ = "audio"
-                    label = f"Audio ({ext}) - {int(f.get('filesize', 0)/1024/1024) if f.get('filesize') else '?'}MB"
-                elif vcodec != 'none':
-                     if height:
-                         label = f"{height}p ({ext})"
-                     else:
-                         continue
-                else:
-                    continue
-
-                key = f"{type_}_{height or 'audio'}"
-                if key not in seen_formats:
-                     formats.append({
-                        "format_id": f_id,
-                        "label": label,
-                        "ext": ext,
-                        "type": type_,
+                # نختار فقط ملفات MP4 التي تحتوي على فيديو وصوت معاً، أو جودة عالية
+                if f.get('ext') == 'mp4' and f.get('acodec') != 'none':
+                    formats_list.append({
+                        'format_id': f['format_id'],
+                        'quality': f.get('format_note', 'Standard'),
+                        'ext': f['ext'],
+                        'url': f.get('url')
                     })
-                     seen_formats.add(key)
             
-            formats.sort(key=lambda x: x['label'], reverse=True)
+            # ترتيب الجودات من الأفضل للأسوأ
+            formats_list.reverse()
 
             return {
                 "title": info.get('title'),
                 "thumbnail": info.get('thumbnail'),
                 "duration": info.get('duration'),
-                "formats": formats
+                "formats": formats_list
             }
 
     except Exception as e:
-        print(f"Error extracting info: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/stream")
-async def stream_video(url: str, format_id: str):
-    ydl_opts = {
-        'format': format_id,
-        'quiet': True,
-    }
-    
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            download_url = info.get('url')
-            if not download_url:
-                raise HTTPException(status_code=404, detail="Could not resolve download URL")
-            
-            return RedirectResponse(url=download_url)
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # طباعة الخطأ في السيرفر وإرجاعه للواجهة
+        print(f"Error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to fetch video: {str(e)}")
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
