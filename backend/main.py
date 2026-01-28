@@ -6,6 +6,7 @@ import yt_dlp
 import uvicorn
 import requests
 import os
+import shutil
 
 app = FastAPI()
 
@@ -22,33 +23,39 @@ class VideoRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    # 1. تحديث المكتبة
+    # 1. تحديث المكتبة دائماً
     os.system("pip install --upgrade yt-dlp")
     
-    # 2. الحل النووي: إنشاء ملف الكوكيز من الإعدادات مباشرة
-    cookies_content = os.getenv("YOUTUBE_COOKIES")
-    if cookies_content:
-        print("Creating cookies.txt from Environment Variable...")
-        with open("cookies.txt", "w") as f:
-            f.write(cookies_content)
+    # 2. نسخ الكوكيز من الخزنة السرية إلى مكان العمل
+    # هذا يحل مشكلة Read-only ومشكلة المسارات
+    secret_path = "/etc/secrets/cookies.txt"
+    local_path = "cookies.txt"
+    
+    if os.path.exists(secret_path):
+        print(f"Found secret cookies. Copying to {local_path}...")
+        try:
+            shutil.copy(secret_path, local_path)
+            print("Cookies copied successfully!")
+        except Exception as e:
+            print(f"Error copying cookies: {e}")
     else:
-        print("WARNING: No YOUTUBE_COOKIES variable found!")
+        print("Warning: No cookies found in secrets! YouTube might block requests.")
 
 @app.get("/")
 def home():
-    return {"message": "Qais Server is Live!"}
+    return {"message": "Qais Al-Jazi Server is Ready"}
 
-# دالة مساعدة لضبط الإعدادات
+# دالة إعدادات التحميل الموحدة
 def get_ydl_opts():
-    opts = {
+    return {
         'quiet': True,
         'no_warnings': True,
         'format': 'best',
+        # نستخدم الملف المحلي اللي نسخناه
+        'cookiefile': 'cookies.txt', 
+        # تعطيل الكاش عشان ما يحاول يكتب على ملفات النظام
+        'cache_dir': False, 
     }
-    # إذا الملف انكتب بنجاح، استخدمه
-    if os.path.exists("cookies.txt"):
-        opts['cookiefile'] = "cookies.txt"
-    return opts
 
 @app.post("/api/info")
 def get_video_info(request: VideoRequest):
@@ -77,6 +84,9 @@ def get_video_info(request: VideoRequest):
             }
     except Exception as e:
         print(f"Info Error: {e}")
+        # إذا الخطأ "Sign in" نرجع رسالة واضحة
+        if "Sign in" in str(e):
+             raise HTTPException(status_code=400, detail="Server Cookies Expired. Please update cookies.txt")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/stream")
