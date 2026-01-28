@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: youtube-downloader-backend
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+      # Download static FFmpeg build
+      mkdir -p ffmpeg
+      curl -L https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz -o ffmpeg.tar.xz
+      tar -xf ffmpeg.tar.xz -C ffmpeg --strip-components=1
+      # We need to add this to PATH in startCommand or runtime
+    startCommand: "export PATH=$PATH:$(pwd)/ffmpeg/bin && uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: YTDLP_UPDATE
+        value: "true"
