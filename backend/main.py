@@ -6,7 +6,6 @@ import yt_dlp
 import uvicorn
 import requests
 import os
-import shutil  # <--- مكتبة مهمة للنسخ
 
 app = FastAPI()
 
@@ -26,34 +25,35 @@ async def startup_event():
     # 1. تحديث المكتبة
     os.system("pip install --upgrade yt-dlp")
     
-    # 2. الحل لمشكلة Read-only file system
-    # نقوم بنسخ ملف الكوكيز من المجلد المحمي إلى مجلد العمل القابل للكتابة
-    secret_path = '/etc/secrets/cookies.txt'
-    writable_path = 'cookies.txt'
-    
-    if os.path.exists(secret_path):
-        print(f"Copying cookies from {secret_path} to {writable_path}...")
-        shutil.copyfile(secret_path, writable_path)
+    # 2. الحل النووي: إنشاء ملف الكوكيز من الإعدادات مباشرة
+    cookies_content = os.getenv("YOUTUBE_COOKIES")
+    if cookies_content:
+        print("Creating cookies.txt from Environment Variable...")
+        with open("cookies.txt", "w") as f:
+            f.write(cookies_content)
     else:
-        print("No secret cookies found, assuming local run.")
+        print("WARNING: No YOUTUBE_COOKIES variable found!")
 
 @app.get("/")
 def home():
     return {"message": "Qais Server is Live!"}
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
+# دالة مساعدة لضبط الإعدادات
+def get_ydl_opts():
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'format': 'best',
+    }
+    # إذا الملف انكتب بنجاح، استخدمه
+    if os.path.exists("cookies.txt"):
+        opts['cookiefile'] = "cookies.txt"
+    return opts
 
 @app.post("/api/info")
 def get_video_info(request: VideoRequest):
     try:
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'cookiefile': 'cookies.txt',  # <--- نستخدم النسخة القابلة للكتابة دائماً
-            'format': 'best',
-        }
+        ydl_opts = get_ydl_opts()
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(request.url, download=False)
             
@@ -82,12 +82,9 @@ def get_video_info(request: VideoRequest):
 @app.get("/api/stream")
 def stream_video(url: str = Query(...), format_id: str = Query(None)):
     try:
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'cookiefile': 'cookies.txt', # <--- نستخدم النسخة القابلة للكتابة
-            'format': format_id if format_id else 'best',
-        }
+        ydl_opts = get_ydl_opts()
+        if format_id:
+            ydl_opts['format'] = format_id
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
