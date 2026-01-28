@@ -9,7 +9,6 @@ import os
 
 app = FastAPI()
 
-# إعدادات CORS (السماح للواجهة بالاتصال)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -21,26 +20,33 @@ app.add_middleware(
 class VideoRequest(BaseModel):
     url: str
 
-# التحديث التلقائي للمكتبة عند التشغيل
 @app.on_event("startup")
 async def startup_event():
     os.system("pip install --upgrade yt-dlp")
 
 @app.get("/")
 def home():
-    return {"message": "Qais Al-Jazi Server is Live & Ready!"}
+    return {"message": "Qais Server is Running!"}
 
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
 
-# 1. دالة جلب المعلومات (لزر التحليل)
+# دالة مساعدة لتحديد مكان ملف الكوكيز سواء على اللابتوب أو على ريندر
+def get_cookie_path():
+    # هذا المسار الخاص بـ Render
+    if os.path.exists('/etc/secrets/cookies.txt'):
+        return '/etc/secrets/cookies.txt'
+    # هذا المسار إذا كنت تجرب على لابتوبك
+    return 'cookies.txt'
+
 @app.post("/api/info")
 def get_video_info(request: VideoRequest):
     try:
         ydl_opts = {
             'quiet': True,
-            'cookiefile': 'cookies.txt', # الملف السري
+            'no_warnings': True,
+            'cookiefile': get_cookie_path(),  # <--- لاحظ هنا التعديل الذكي
             'format': 'best',
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -48,18 +54,14 @@ def get_video_info(request: VideoRequest):
             
             formats_list = []
             for f in info.get('formats', []):
-                # نختار صيغ MP4 التي تحتوي على صوت وصورة
                 if f.get('ext') == 'mp4' and f.get('acodec') != 'none':
-                    # نستخدم رابط السيرفر الخاص بنا للتحميل بدلاً من رابط جوجل المباشر
-                    # هذا يحل مشكلة الحظر (403 Forbidden)
                     server_url = os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
-                    # نقوم بترميز الرابط الأصلي لتمريره
                     proxy_link = f"{server_url}/api/stream?url={request.url}&format_id={f['format_id']}"
                     
                     formats_list.append({
                         'quality': f.get('format_note', 'HD'),
                         'ext': f['ext'],
-                        'url': proxy_link # الرابط الجديد الموجه عبر سيرفرنا
+                        'url': proxy_link
                     })
             
             formats_list.reverse()
@@ -69,37 +71,36 @@ def get_video_info(request: VideoRequest):
                 "formats": formats_list
             }
     except Exception as e:
+        print(f"Error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
-# 2. دالة التحميل الجديدة (هذه هي الناقصة عندك!)
 @app.get("/api/stream")
 def stream_video(url: str = Query(...), format_id: str = Query(None)):
     try:
         ydl_opts = {
             'quiet': True,
-            'cookiefile': 'cookies.txt',
+            'no_warnings': True,
+            'cookiefile': get_cookie_path(), # <--- وهنا أيضاً
             'format': format_id if format_id else 'best',
         }
         
-        # نحصل على الرابط المباشر الطازج من يوتيوب
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
-            direct_url = info.get('url') # رابط جوجل الحقيقي
+            direct_url = info.get('url')
             title = info.get('title', 'video')
 
-        # نقوم بعمل "بث" (Stream) من جوجل للمستخدم عبر سيرفرنا
         def iterfile():
             with requests.get(direct_url, stream=True) as r:
-                for chunk in r.iter_content(chunk_size=1024*1024): # 1MB chunks
+                for chunk in r.iter_content(chunk_size=1024*1024):
                     yield chunk
 
-        # إعداد الترويسة ليبدأ التحميل كملف
         headers = {
             "Content-Disposition": f'attachment; filename="{title}.mp4"'
         }
         return StreamingResponse(iterfile(), media_type="video/mp4", headers=headers)
 
     except Exception as e:
+        print(f"Stream Error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 if __name__ == "__main__":
