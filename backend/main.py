@@ -6,6 +6,7 @@ import yt_dlp
 import uvicorn
 import requests
 import os
+import shutil  # <--- مكتبة مهمة للنسخ
 
 app = FastAPI()
 
@@ -22,23 +23,27 @@ class VideoRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
+    # 1. تحديث المكتبة
     os.system("pip install --upgrade yt-dlp")
+    
+    # 2. الحل لمشكلة Read-only file system
+    # نقوم بنسخ ملف الكوكيز من المجلد المحمي إلى مجلد العمل القابل للكتابة
+    secret_path = '/etc/secrets/cookies.txt'
+    writable_path = 'cookies.txt'
+    
+    if os.path.exists(secret_path):
+        print(f"Copying cookies from {secret_path} to {writable_path}...")
+        shutil.copyfile(secret_path, writable_path)
+    else:
+        print("No secret cookies found, assuming local run.")
 
 @app.get("/")
 def home():
-    return {"message": "Qais Server is Running!"}
+    return {"message": "Qais Server is Live!"}
 
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
-
-# دالة مساعدة لتحديد مكان ملف الكوكيز سواء على اللابتوب أو على ريندر
-def get_cookie_path():
-    # هذا المسار الخاص بـ Render
-    if os.path.exists('/etc/secrets/cookies.txt'):
-        return '/etc/secrets/cookies.txt'
-    # هذا المسار إذا كنت تجرب على لابتوبك
-    return 'cookies.txt'
 
 @app.post("/api/info")
 def get_video_info(request: VideoRequest):
@@ -46,7 +51,7 @@ def get_video_info(request: VideoRequest):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'cookiefile': get_cookie_path(),  # <--- لاحظ هنا التعديل الذكي
+            'cookiefile': 'cookies.txt',  # <--- نستخدم النسخة القابلة للكتابة دائماً
             'format': 'best',
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -71,7 +76,7 @@ def get_video_info(request: VideoRequest):
                 "formats": formats_list
             }
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Info Error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/stream")
@@ -80,7 +85,7 @@ def stream_video(url: str = Query(...), format_id: str = Query(None)):
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
-            'cookiefile': get_cookie_path(), # <--- وهنا أيضاً
+            'cookiefile': 'cookies.txt', # <--- نستخدم النسخة القابلة للكتابة
             'format': format_id if format_id else 'best',
         }
         
